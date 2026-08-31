@@ -10,9 +10,15 @@ CALDAV_PASS = os.environ.get("CALDAV_PASS")
 
 def fetch_and_convert():
     # 连接企业微信 CalDAV
-    client = DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASS)
-    principal = client.principal()
+   # 使用 principal_url 或直接让 client 寻找账号日历
+client = DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASS)
+principal = client.principal()
+try:
     calendars = principal.calendars()
+except Exception:
+    # 如果 principal 获取失败，尝试直接从 user 路径获取日历
+    my_principal = client.principal(url=f"{CALDAV_URL.rstrip('/')}/principals/users/{CALDAV_USER}/")
+    calendars = my_principal.calendars()
 
     if not calendars:
         print("未找到任何日历")
