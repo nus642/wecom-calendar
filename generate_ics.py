@@ -4,21 +4,32 @@ from caldav import DAVClient
 from icalendar import Calendar
 
 # 从环境变量中读取配置
-CALDAV_URL = os.environ.get("CALDAV_URL")
-CALDAV_USER = os.environ.get("CALDAV_USER")
-CALDAV_PASS = os.environ.get("CALDAV_PASS")
+CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
+CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
+CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
+
+def format_url(url):
+    """确保 URL 包含 https:// 前缀且末尾不带斜杠"""
+    if not url:
+        return ""
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    return url.rstrip('/')
 
 def fetch_and_convert():
-    # 连接企业微信 CalDAV
-    client = DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASS)
+    clean_url = format_url(CALDAV_URL)
     
+    # 连接企业微信 CalDAV
+    client = DAVClient(url=clean_url, username=CALDAV_USER, password=CALDAV_PASS)
+    
+    calendars = []
     try:
         principal = client.principal()
         calendars = principal.calendars()
-    except Exception:
-        # 兜底：直接指明企微用户路径
-        clean_url = CALDAV_URL.rstrip('/') if CALDAV_URL else ""
-        my_principal = client.principal(url=f"{clean_url}/principals/users/{CALDAV_USER}/")
+    except Exception as e:
+        print(f"尝试默认 principal 获取失败: {e}，改用用户路径获取...")
+        user_principal_url = f"{clean_url}/principals/users/{CALDAV_USER}/"
+        my_principal = client.principal(url=user_principal_url)
         calendars = my_principal.calendars()
 
     if not calendars:
