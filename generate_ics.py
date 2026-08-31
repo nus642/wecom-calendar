@@ -1,46 +1,46 @@
 import os
 from datetime import datetime, timedelta, timezone
 from caldav import DAVClient
-from icalendar import Calendar, Event
+from icalendar import Calendar
 
-# 从环境变量中读取密码配置
+# 从环境变量中读取配置
 CALDAV_URL = os.environ.get("CALDAV_URL")
 CALDAV_USER = os.environ.get("CALDAV_USER")
 CALDAV_PASS = os.environ.get("CALDAV_PASS")
 
 def fetch_and_convert():
     # 连接企业微信 CalDAV
-   # 使用 principal_url 或直接让 client 寻找账号日历
-client = DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASS)
-principal = client.principal()
-try:
-    calendars = principal.calendars()
-except Exception:
-    # 如果 principal 获取失败，尝试直接从 user 路径获取日历
-    my_principal = client.principal(url=f"{CALDAV_URL.rstrip('/')}/principals/users/{CALDAV_USER}/")
-    calendars = my_principal.calendars()
+    client = DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASS)
+    
+    try:
+        principal = client.principal()
+        calendars = principal.calendars()
+    except Exception:
+        # 兜底：直接指明企微用户路径
+        clean_url = CALDAV_URL.rstrip('/') if CALDAV_URL else ""
+        my_principal = client.principal(url=f"{clean_url}/principals/users/{CALDAV_USER}/")
+        calendars = my_principal.calendars()
 
     if not calendars:
         print("未找到任何日历")
         return
 
-    # 创建一个新的标准 ics 日历对象
+    # 创建标准 ics 日历对象
     new_cal = Calendar()
     new_cal.add('prodid', '-//WeCom to Google Calendar Bridge//CN')
     new_cal.add('version', '2.0')
     new_cal.add('X-WR-CALNAME', '企业微信日程')
 
-    # 获取前后 30 天的日程，避免范围过大
+    # 获取前后 30 天/60 天的日程
     now = datetime.now(timezone.utc)
     start_time = now - timedelta(days=30)
     end_time = now + timedelta(days=60)
 
-    # 遍历所有日历事件并拉取
+    # 遍历所有日历事件
     for cal in calendars:
         events = cal.date_search(start=start_time, end=end_time)
         for event in events:
             try:
-                # 解析原始 ics 事件
                 parsed_cal = Calendar.from_ical(event.data)
                 for component in parsed_cal.walk():
                     if component.name == "VEVENT":
@@ -48,7 +48,7 @@ except Exception:
             except Exception as e:
                 print(f"解析日程出错: {e}")
 
-    # 将合并后的 ics 保存为文件
+    # 保存文件到 public 目录
     os.makedirs("public", exist_ok=True)
     with open("public/calendar.ics", "wb") as f:
         f.write(new_cal.to_ical())
