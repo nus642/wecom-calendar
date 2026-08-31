@@ -1,0 +1,41 @@
+name: Generate ICS Calendar
+
+on:
+  schedule:
+    # 每 2 小时自动运行一次拉取最新日程
+    - cron: '0 */2 * * *'
+  # 支持在 GitHub 界面手动触发运行
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install caldav icalendar
+
+      - name: 运行转换脚本
+        env:
+          CALDAV_URL: ${{ secrets.CALDAV_URL }}
+          CALDAV_USER: ${{ secrets.CALDAV_USER }}
+          CALDAV_PASS: ${{ secrets.CALDAV_PASS }}
+        run: python generate_ics.py
+
+      - name: 发布到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
