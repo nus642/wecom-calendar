@@ -1,61 +1,51 @@
 import os
-import re
-from caldav import DAVClient
+import requests
+from requests.auth import HTTPBasicAuth
 
-CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
 CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
 CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
 
-def clean_url(url):
-    if not url:
-        return ""
-    url = re.sub(r'[\[\]"]', '', url).strip()
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
-    return url.rstrip('/')
-
-def test_connection():
-    url = clean_url(CALDAV_URL)
-    print("================ 开始测试 Secrets 配置 ================")
-    print(f"1. URL: {url}")
-    print(f"2. 账号: {CALDAV_USER}")
-    print(f"3. 密码长度: {len(CALDAV_PASS)} 位")
-
-    if not url or not CALDAV_USER or not CALDAV_PASS:
-        print("❌ 错误：有环境变量未读取到，请检查 Secrets 命名！")
-        exit(1)
-
-    client = DAVClient(url=url, username=CALDAV_USER, password=CALDAV_PASS)
-
-    # 依次尝试不同的入口路径
-    test_paths = [
-        ("默认 Principal 路径", None),
-        ("用户 Principal 路径", f"{url}/principals/users/{CALDAV_USER}/"),
-        ("直连 Calendar 路径", f"{url}/calendars/{CALDAV_USER}/")
+def direct_test():
+    urls = [
+        "https://caldav.wecom.work",
+        "https://wecom.work"
     ]
+    
+    headers = {
+        "User-Agent": "iOS/16.0 (20A362) calendard/1.0",
+        "Content-Type": "text/xml; charset=utf-8"
+    }
 
-    success = False
-    for name, path in test_paths:
-        print(f"\n正在尝试 [{name}]...")
+    body = """<?xml version="1.0" encoding="utf-8" ?>
+    <D:propfind xmlns:D="DAV:">
+        <D:prop><D:current-user-principal/></D:prop>
+    </D:propfind>"""
+
+    print("================ 企微 CalDAV 深入诊断 ================")
+    print(f"当前测试账号: {CALDAV_USER}")
+    
+    for base_url in urls:
+        print(f"\n[测试服务器]: {base_url}")
         try:
-            if path:
-                principal = client.principal(url=path)
+            res = requests.request(
+                "PROPFIND",
+                base_url,
+                auth=HTTPBasicAuth(CALDAV_USER, CALDAV_PASS),
+                data=body,
+                headers=headers,
+                timeout=10
+            )
+            print(f"HTTP 状态码: {res.status_code}")
+            if res.status_code == 207:
+                print(f"✅ {base_url} 认证成功！")
+            elif res.status_code == 403:
+                print(f"❌ {base_url} 报错 403 Forbidden（可能被企业管理员禁用或密码不正确）")
+            elif res.status_code == 401:
+                print(f"❌ {base_url} 报错 401 Unauthorized（账号或密码明确错误）")
             else:
-                principal = client.principal()
-            
-            calendars = principal.calendars()
-            print(f"✅ [{name}] 认证成功！获取到 {len(calendars)} 个日历。")
-            success = True
-            break
+                print(f"⚠️ 返回状态: {res.status_code}")
         except Exception as e:
-            print(f"❌ [{name}] 失败: {e}")
-
-    if success:
-        print("\n================ Secrets 验证通过 ================")
-    else:
-        print("\n❌ 所有路径均鉴权失败(Forbidden)。请重新在企微获取最新CalDAV密码，并检查账号是否完全一致。")
-        print("==================================================")
-        exit(1)
+            print(f"网络异常: {e}")
 
 if __name__ == "__main__":
-    test_connection()
+    direct_test()
