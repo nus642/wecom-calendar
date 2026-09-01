@@ -1,43 +1,47 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from caldav import DAVClient
-from icalendar import Calendar
+from exchangelib import Credentials, Account, Configuration, DEEP, FileAttachment
+from icalendar import Calendar, Event
 
-CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
-CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
-CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
+# 从 Secrets 获取配置
+CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()  # 企微/企业邮箱账号 (例: user@company.com)
+CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()  # 客户端专用密码/邮箱密码
+# Exchange 服务器地址，腾讯企业邮/企微通常为 ex.qq.com
+EXCHANGE_SERVER = "wecom.work"
 
-def format_url(url):
-    if not url:
+def clean_input(text):
+    if not text:
         return ""
-    url = re.sub(r'[\[\]"]', '', url).strip()
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
-    return url.rstrip('/')
+    return re.sub(r'[\[\]"]', '', text).strip()
 
 def fetch_and_convert():
-    clean_url = format_url(CALDAV_URL)
-    print(f"正在连接 CalDAV 服务器: {clean_url}")
+    user = clean_input(CALDAV_USER)
+    password = clean_input(CALDAV_PASS)
+
+    print(f"================ 开始尝试 Exchange (EAS) 同步 ================")
+    print(f"账号: {user}")
+    print(f"服务器: {EXCHANGE_SERVER}")
+
+    # 1. 建立 Exchange 认证与连接
+    credentials = Credentials(username=user, password=password)
+    config = Configuration(server=EXCHANGE_SERVER, credentials=credentials)
     
-    client = DAVClient(url=clean_url, username=CALDAV_USER, password=CALDAV_PASS)
-    
-    calendars = []
     try:
-        principal = client.principal()
-        calendars = principal.calendars()
+        account = Account(
+            primary_smtp_address=user,
+            config=config,
+            autodiscover=False,
+            access_type='delegate'
+        )
+        print("✅ Exchange 服务器认证成功！")
     except Exception as e:
-        print(f"尝试默认 principal 失败，改用用户路径: {e}")
-        user_principal_url = f"{clean_url}/principals/users/{CALDAV_USER}/"
-        my_principal = client.principal(url=user_principal_url)
-        calendars = my_principal.calendars()
+        print(f"❌ Exchange 连接认证失败: {e}")
+        exit(1)
 
-    if not calendars:
-        print("未找到任何日历")
-        return
-
+    # 2. 获取日历中的日程事件
     new_cal = Calendar()
-    new_cal.add('prodid', '-//WeCom to Google Calendar Bridge//CN')
+    new_cal.add('prodid', '-//WeCom Exchange to Google Calendar Bridge//CN')
     new_cal.add('version', '2.0')
     new_cal.add('X-WR-CALNAME', '企业微信日程')
 
@@ -45,21 +49,41 @@ def fetch_and_convert():
     start_time = now - timedelta(days=30)
     end_time = now + timedelta(days=60)
 
-    for cal in calendars:
-        events = cal.date_search(start=start_time, end=end_time)
-        for event in events:
-            try:
-                parsed_cal = Calendar.from_ical(event.data)
-                for component in parsed_cal.walk():
-                    if component.name == "VEVENT":
-                        new_cal.add_component(component)
-            except Exception as e:
-                print(f"解析日程出错: {e}")
+    print("正在拉取日程数据...")
+    try:
+        # 查询指定时间范围内的 Exchange 日程项
+        items = account.calendar.filter(
+            start__lt=end_time,
+            end__gt=start_time
+        )
 
+        count = 0
+        for item in items:
+            event = Event()
+            event.add('summary', item.subject or '无标题')
+            if item.start:
+                event.add('dtstart', item.start)
+            if item.end:
+                event.add('dtend', item.end)
+            if item.location:
+                event.add('location', item.location)
+            if item.body:
+                event.add('description', str(item.body))
+
+            new_cal.add_component(event)
+            count += 1
+
+        print(f"✅ 成功提取到 {count} 条日程！")
+
+    except Exception as e:
+        print(f"❌ 获取日历事件失败: {e}")
+        exit(1)
+
+    # 3. 保存为 public/calendar.ics
     os.makedirs("public", exist_ok=True)
     with open("public/calendar.ics", "wb") as f:
         f.write(new_cal.to_ical())
-    print("calendar.ics 生成成功！")
+    print("🎉 calendar.ics 生成成功！")
 
 if __name__ == "__main__":
     fetch_and_convert()
