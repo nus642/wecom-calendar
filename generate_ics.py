@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from exchangelib import Credentials, Account, Configuration, BASIC, Build
+from exchangelib import Credentials, Account, Configuration, BASIC, Build, Version
 from icalendar import Calendar, Event
 
 CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
@@ -18,8 +18,6 @@ def clean_input(text):
 def fetch_and_convert():
     user = clean_input(CALDAV_USER)
     password = clean_input(CALDAV_PASS)
-    
-    # 优先使用配置的 URL 域名，否则使用默认企微服务器
     server = clean_input(CALDAV_URL) if CALDAV_URL else "wecom.work"
 
     print("================ 开始 Exchange (EAS) 同步 ================")
@@ -28,12 +26,14 @@ def fetch_and_convert():
 
     credentials = Credentials(username=user, password=password)
     
-    # 强制指定 BASIC 认证方式，并锁定 Exchange 2013/2016 协议版本
+    # 将 Build 嵌套进 Version 对象中
+    version = Version(build=Build(15, 0, 0, 0))
+
     config = Configuration(
         server=server,
         credentials=credentials,
         auth_type=BASIC,
-        version=Build(15, 0, 0, 0)
+        version=version
     )
 
     try:
@@ -59,7 +59,6 @@ def fetch_and_convert():
 
     print("正在拉取日程数据...")
     try:
-        # 直接提取日历项
         items = account.calendar.filter(
             start__lt=end_time,
             end__gt=start_time
