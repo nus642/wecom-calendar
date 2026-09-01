@@ -1,32 +1,41 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from exchangelib import Credentials, Account, Configuration, DEEP, FileAttachment
+from exchangelib import Credentials, Account, Configuration, BASIC, Build
 from icalendar import Calendar, Event
 
-# 从 Secrets 获取配置
-CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()  # 企微/企业邮箱账号 (例: user@company.com)
-CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()  # 客户端专用密码/邮箱密码
-# Exchange 服务器地址，腾讯企业邮/企微通常为 ex.qq.com
-EXCHANGE_SERVER = "wecom.work"
+CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
+CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
+CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
 
 def clean_input(text):
     if not text:
         return ""
-    return re.sub(r'[\[\]"]', '', text).strip()
+    text = re.sub(r'[\[\]"]', '', text).strip()
+    text = re.sub(r'^https?://', '', text)
+    return text.rstrip('/')
 
 def fetch_and_convert():
     user = clean_input(CALDAV_USER)
     password = clean_input(CALDAV_PASS)
-
-    print(f"================ 开始尝试 Exchange (EAS) 同步 ================")
-    print(f"账号: {user}")
-    print(f"服务器: {EXCHANGE_SERVER}")
-
-    # 1. 建立 Exchange 认证与连接
-    credentials = Credentials(username=user, password=password)
-    config = Configuration(server=EXCHANGE_SERVER, credentials=credentials)
     
+    # 优先使用配置的 URL 域名，否则使用默认企微服务器
+    server = clean_input(CALDAV_URL) if CALDAV_URL else "wecom.work"
+
+    print("================ 开始 Exchange (EAS) 同步 ================")
+    print(f"账号: {user}")
+    print(f"服务器: {server}")
+
+    credentials = Credentials(username=user, password=password)
+    
+    # 强制指定 BASIC 认证方式，并锁定 Exchange 2013/2016 协议版本
+    config = Configuration(
+        server=server,
+        credentials=credentials,
+        auth_type=BASIC,
+        version=Build(15, 0, 0, 0)
+    )
+
     try:
         account = Account(
             primary_smtp_address=user,
@@ -39,7 +48,6 @@ def fetch_and_convert():
         print(f"❌ Exchange 连接认证失败: {e}")
         exit(1)
 
-    # 2. 获取日历中的日程事件
     new_cal = Calendar()
     new_cal.add('prodid', '-//WeCom Exchange to Google Calendar Bridge//CN')
     new_cal.add('version', '2.0')
@@ -51,7 +59,7 @@ def fetch_and_convert():
 
     print("正在拉取日程数据...")
     try:
-        # 查询指定时间范围内的 Exchange 日程项
+        # 直接提取日历项
         items = account.calendar.filter(
             start__lt=end_time,
             end__gt=start_time
@@ -73,17 +81,16 @@ def fetch_and_convert():
             new_cal.add_component(event)
             count += 1
 
-        print(f"✅ 成功提取到 {count} 条日程！")
+        print(f"🎉 成功提取到 {count} 条日程！")
 
     except Exception as e:
         print(f"❌ 获取日历事件失败: {e}")
         exit(1)
 
-    # 3. 保存为 public/calendar.ics
     os.makedirs("public", exist_ok=True)
     with open("public/calendar.ics", "wb") as f:
         f.write(new_cal.to_ical())
-    print("🎉 calendar.ics 生成成功！")
+    print("calendar.ics 生成成功！")
 
 if __name__ == "__main__":
     fetch_and_convert()
