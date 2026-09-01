@@ -1,69 +1,51 @@
 import os
-from datetime import datetime, timedelta, timezone
+import re
 from caldav import DAVClient
-from icalendar import Calendar
 
-# 从环境变量中读取配置
 CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
 CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
 CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
 
-def format_url(url):
-    """确保 URL 包含 https:// 前缀且末尾不带斜杠"""
+def clean_url(url):
     if not url:
         return ""
+    url = re.sub(r'[\[\]"]', '', url).strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         url = "https://" + url
     return url.rstrip('/')
 
-def fetch_and_convert():
-    clean_url = format_url(CALDAV_URL)
-    
-    # 连接企业微信 CalDAV
-    client = DAVClient(url=clean_url, username=CALDAV_USER, password=CALDAV_PASS)
-    
-    calendars = []
+def test_connection():
+    url = clean_url(CALDAV_URL)
+    print("================ 开始测试 Secrets 配置 ================")
+    print(f"1. 读取到的 URL: {url}")
+    print(f"2. 读取到的账号: {CALDAV_USER}")
+    print(f"3. 密码长度: {len(CALDAV_PASS)} 位 (已隐去明文)")
+
+    if not url or not CALDAV_USER or not CALDAV_PASS:
+        print("❌ 错误：有环境变量未读取到，请检查 Secrets 名字是否完全一致！")
+        exit(1)
+
     try:
-        principal = client.principal()
-        calendars = principal.calendars()
+        print("\n正在建立 CalDAV 连接...")
+        client = DAVClient(url=url, username=CALDAV_USER, password=CALDAV_PASS)
+        
+        # 尝试连通
+        try:
+            principal = client.principal()
+            calendars = principal.calendars()
+        except Exception:
+            print("默认路径失败，尝试企微专属路径...")
+            user_url = f"{url}/principals/users/{CALDAV_USER}/"
+            principal = client.principal(url=user_url)
+            calendars = principal.calendars()
+
+        print(f"✅ 认证成功！成功获取到 {len(calendars)} 个日历。")
+        print("================ Secrets 验证通过 ================")
+
     except Exception as e:
-        print(f"尝试默认 principal 获取失败: {e}，改用用户路径获取...")
-        user_principal_url = f"{clean_url}/principals/users/{CALDAV_USER}/"
-        my_principal = client.principal(url=user_principal_url)
-        calendars = my_principal.calendars()
-
-    if not calendars:
-        print("未找到任何日历")
-        return
-
-    # 创建标准 ics 日历对象
-    new_cal = Calendar()
-    new_cal.add('prodid', '-//WeCom to Google Calendar Bridge//CN')
-    new_cal.add('version', '2.0')
-    new_cal.add('X-WR-CALNAME', '企业微信日程')
-
-    # 获取前后 30 天/60 天的日程
-    now = datetime.now(timezone.utc)
-    start_time = now - timedelta(days=30)
-    end_time = now + timedelta(days=60)
-
-    # 遍历所有日历事件
-    for cal in calendars:
-        events = cal.date_search(start=start_time, end=end_time)
-        for event in events:
-            try:
-                parsed_cal = Calendar.from_ical(event.data)
-                for component in parsed_cal.walk():
-                    if component.name == "VEVENT":
-                        new_cal.add_component(component)
-            except Exception as e:
-                print(f"解析日程出错: {e}")
-
-    # 保存文件到 public 目录
-    os.makedirs("public", exist_ok=True)
-    with open("public/calendar.ics", "wb") as f:
-        f.write(new_cal.to_ical())
-    print("calendar.ics 生成成功！")
+        print(f"\n❌ 连接失败，具体错误信息：\n{e}")
+        print("==================================================")
+        exit(1)
 
 if __name__ == "__main__":
-    fetch_and_convert()
+    test_connection()
