@@ -1,55 +1,65 @@
 import os
 import re
-import urllib.request
-import urllib.error
-import base64
+from datetime import datetime, timedelta, timezone
+from caldav import DAVClient
+from icalendar import Calendar
 
+CALDAV_URL = os.environ.get("CALDAV_URL", "").strip()
 CALDAV_USER = os.environ.get("CALDAV_USER", "").strip()
 CALDAV_PASS = os.environ.get("CALDAV_PASS", "").strip()
 
-def direct_test():
-    urls = [
-        "https://caldav.wecom.work",
-        "https://wecom.work"
-    ]
+def format_url(url):
+    if not url:
+        return ""
+    url = re.sub(r'[\[\]"]', '', url).strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    return url.rstrip('/')
 
-    body = """<?xml version="1.0" encoding="utf-8" ?>
-    <D:propfind xmlns:D="DAV:">
-        <D:prop><D:current-user-principal/></D:prop>
-    </D:propfind>""".encode('utf-8')
+def fetch_and_convert():
+    clean_url = format_url(CALDAV_URL)
+    print(f"正在连接 CalDAV 服务器: {clean_url}")
+    
+    client = DAVClient(url=clean_url, username=CALDAV_USER, password=CALDAV_PASS)
+    
+    calendars = []
+    try:
+        principal = client.principal()
+        calendars = principal.calendars()
+    except Exception as e:
+        print(f"尝试默认 principal 失败，改用用户路径: {e}")
+        user_principal_url = f"{clean_url}/principals/users/{CALDAV_USER}/"
+        my_principal = client.principal(url=user_principal_url)
+        calendars = my_principal.calendars()
 
-    # 生成 Basic Auth 认证头
-    auth_str = f"{CALDAV_USER}:{CALDAV_PASS}"
-    auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+    if not calendars:
+        print("未找到任何日历")
+        return
 
-    headers = {
-        "User-Agent": "iOS/16.0 (20A362) calendard/1.0",
-        "Content-Type": "text/xml; charset=utf-8",
-        "Authorization": f"Basic {auth_b64}"
-    }
+    new_cal = Calendar()
+    new_cal.add('prodid', '-//WeCom to Google Calendar Bridge//CN')
+    new_cal.add('version', '2.0')
+    new_cal.add('X-WR-CALNAME', '企业微信日程')
 
-    print("================ 企微 CalDAV 深入诊断 ================")
-    print(f"当前测试账号: {CALDAV_USER}")
+    now = datetime.now(timezone.utc)
+    start_time = now - timedelta(days=30)
+    end_time = now + timedelta(days=60)
 
-    for base_url in urls:
-        print(f"\n[测试服务器]: {base_url}")
-        req = urllib.request.Request(base_url, data=body, headers=headers, method="PROPFIND")
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                status = response.getcode()
-                print(f"HTTP 状态码: {status}")
-                if status == 207:
-                    print(f"✅ {base_url} 认证成功！")
-        except urllib.error.HTTPError as e:
-            print(f"HTTP 状态码: {e.code}")
-            if e.code == 403:
-                print(f"❌ {base_url} 报错 403 Forbidden（可能被企业管理员禁用或密码不正确）")
-            elif e.code == 401:
-                print(f"❌ {base_url} 报错 401 Unauthorized（账号或密码明确错误）")
-            else:
-                print(f"⚠️ 返回状态: {e.code}")
-        except Exception as e:
-            print(f"网络异常: {e}")
+    for cal in calendars:
+        events = cal.date_search(start=start_time, end=end_time)
+        for event in events:
+            try:
+                parsed_cal = Calendar.from_ical(event.data)
+                for component in parsed_cal.walk():
+                    if component.name == "VEVENT":
+                        new_cal.add_component(component)
+            except Exception as e:
+                print(f"解析日程出错: {e}")
+
+    os.makedirs("public", exist_ok=True)
+    with open("public/calendar.ics", "wb") as f:
+        f.write(new_cal.to_ical())
+    print("calendar.ics 生成成功！")
 
 if __name__ == "__main__":
-    direct_test()
+    fetch_and_convert()
